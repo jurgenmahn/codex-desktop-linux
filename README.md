@@ -114,7 +114,14 @@ sudo systemctl enable --now ydotoold
 sudo usermod -a -G input "$USER"
 ```
 
-Some distros install `/usr/bin/ydotoold` without a service unit. If `systemctl enable --now ydotoold` fails, create or install a distro-appropriate unit. If `doctor` reports `ydotool_socket: Permission denied`, make sure the socket is usable by users in the `input` group.
+On Fedora 44, the packaged unit is commonly named `ydotool.service` rather than `ydotoold.service`. Some distros install `/usr/bin/ydotoold` without any service unit. If `systemctl enable --now ydotoold` fails, start the distro-provided unit instead or create a user-session service that binds `%t/.ydotool_socket`. If `doctor` reports `ydotool_socket: Permission denied`, make sure the socket is usable by users in the `input` group.
+
+If you are on Fedora + KDE Plasma and the system unit path is awkward, a user-session `ydotoold` service is also a valid setup. In that case, make sure:
+
+- the socket is reachable at `%t/.ydotool_socket`
+- the service runs inside your user session
+- old system-level overrides are removed if they force the wrong socket path
+- `codex-computer-use-linux doctor` reports `can_send_development_input: true`
 
 A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway / Hyprland, or your distro's preferred portal backend for i3. GNOME ships a working portal by default.
 
@@ -365,7 +372,7 @@ make clean-state
 | Sandbox errors | The launcher already sets `--no-sandbox` |
 | Stale install / cached DMG | `./install.sh --fresh` removes the existing install dir and re-downloads |
 | Computer Use plugin invisible in UI | Ensure you enabled the Computer Use UI. If it is enabled and still hidden, the OpenAI per-account rollout may not be available |
-| Computer Use `doctor` reports `ydotool not running` | `sudo systemctl enable --now ydotoold` and add your user to the `input` group |
+| Computer Use `doctor` reports `ydotool not running` | Start the distro-provided daemon unit (`ydotoold` or `ydotool`), or use a user-session `ydotoold` service, then add your user to the `input` group |
 | Computer Use `doctor` reports `ydotool_socket: Permission denied` | The daemon socket is root-only. Adjust the `ydotoold` service so `/tmp/.ydotool_socket` becomes `root:input` with `0660` permissions |
 | `ConnectTimeoutError` for `www.electronjs.org` during `@electron/rebuild` | Re-run `make build-app`; the installer now uses `https://artifacts.electronjs.org/headers/dist` for Electron headers by default |
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup` to flip GNOME accessibility on, then restart the target app |
