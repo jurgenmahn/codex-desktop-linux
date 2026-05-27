@@ -14,3 +14,7 @@ linux-features/features.json
 .idea/
 .claude/
 .codex/
+
+# graphify
+graphify-out/
+.graphify_*
