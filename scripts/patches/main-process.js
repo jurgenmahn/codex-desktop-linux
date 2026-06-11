@@ -285,7 +285,8 @@ function applyLinuxSetIconPatch(currentSource, iconAsset) {
   let patchedAny = false;
   const patchedSource = currentSource.replace(readyRegex, (match, windowVar, offset) => {
     const linuxPatch = `process.platform===\`linux\`&&${windowVar}.setIcon(${iconPathExpression}),`;
-    if (currentSource.slice(Math.max(0, offset - linuxPatch.length), offset) === linuxPatch) {
+    const prefix = currentSource.slice(Math.max(0, offset - Math.max(400, linuxPatch.length * 2)), offset);
+    if (prefix.includes(linuxPatch)) {
       return match;
     }
     patchedAny = true;
@@ -331,6 +332,50 @@ function applyLinuxReadyToShowWindowStatePatch(currentSource) {
   }
 
   return currentSource;
+}
+
+function applyLinuxResizeRepaintPatch(currentSource) {
+  const helperName = "codexLinuxInstallResizeRepaintHook";
+  const helper =
+    "function codexLinuxInstallResizeRepaintHook(e){if(!(process.platform===`linux`)||e.__codexLinuxResizeRepaintHookInstalled)return;e.__codexLinuxResizeRepaintHookInstalled=!0;let __codexResizeRepaintScheduled=!1,__codexResizeRepaint=()=>{__codexResizeRepaintScheduled||(__codexResizeRepaintScheduled=!0,setTimeout(()=>{if(__codexResizeRepaintScheduled=!1,e.isDestroyed())return;let __codexWebContents=e.webContents;__codexWebContents==null||__codexWebContents.isDestroyed?.()||typeof __codexWebContents.invalidate==`function`&&__codexWebContents.invalidate()},16))};e.on(`resize`,__codexResizeRepaint),e.on(`resized`,__codexResizeRepaint)}";
+  const readyToShowRegex =
+    /(^|[^A-Za-z0-9_$])((?:[A-Za-z_$][\w$]*&&)?)([A-Za-z_$][\w$]*)\.once\(`ready-to-show`,\(\)=>\{/g;
+  let patchedAny = false;
+  const patchedSource = currentSource.replace(
+    readyToShowRegex,
+    (match, leading, guardPrefix, windowVar, offset, source) => {
+      const linuxPatch = `process.platform===\`linux\`&&${helperName}(${windowVar}),`;
+      const insertionPoint = offset + leading.length;
+      const prefix = source.slice(Math.max(0, insertionPoint - Math.max(400, linuxPatch.length * 2)), insertionPoint);
+      if (prefix.includes(linuxPatch)) {
+        return match;
+      }
+      patchedAny = true;
+      return `${leading}${linuxPatch}${guardPrefix}${windowVar}.once(\`ready-to-show\`,()=>{`;
+    },
+  );
+
+  if (!patchedAny) {
+    if (currentSource.includes(`${helperName}(`)) {
+      return currentSource;
+    }
+    if (currentSource.includes("ready-to-show")) {
+      console.warn("WARN: Could not find ready-to-show hook — skipping Linux resize repaint patch");
+    }
+    return currentSource;
+  }
+
+  if (patchedSource.includes(`function ${helperName}(`)) {
+    return patchedSource;
+  }
+
+  for (const prefix of ['"use strict";', "'use strict';"]) {
+    if (patchedSource.startsWith(prefix)) {
+      return `${prefix}${helper}${patchedSource.slice(prefix.length)}`;
+    }
+  }
+
+  return `${helper}${patchedSource}`;
 }
 
 function applyLinuxOpaqueBackgroundPatch(currentSource) {
@@ -1248,6 +1293,45 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxBrowserUseRouteLivenessPatch(currentSource) {
+  if (currentSource.includes("codexLinuxResolveLiveBrowserUseRouteWindow")) {
+    return currentSource;
+  }
+
+  const routeWindowPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{ensureWindowState:([A-Za-z_$][\w$]*),windowId:([A-Za-z_$][\w$]*),windows:([A-Za-z_$][\w$]*)\}\)\{let ([A-Za-z_$][\w$]*)=\4\.get\(\3\)\?\?null;if\(\5==null\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.BrowserWindow\.fromId\(\3\);\6!=null&&!\6\.isDestroyed\(\)&&!\6\.webContents\.isDestroyed\(\)&&\(\5=\2\(\6,\6\.webContents\)\)\}return \5==null\|\|\5\.window\.isDestroyed\(\)\|\|\5\.owner\.isDestroyed\(\)\?\(([A-Za-z_$][\w$]*)\(\)\.warning\(`IAB_LIFECYCLE route window is not live`,\{safe:\{hasWindowState:\5!=null,ownerDestroyed:\5\?\.owner\.isDestroyed\(\)\?\?null,windowDestroyed:\5\?\.window\.isDestroyed\(\)\?\?null,windowId:\3\},sensitive:\{\}\}\),null\):\5\}/u;
+
+  const match = currentSource.match(routeWindowPattern);
+  if (match == null) {
+    if (
+      currentSource.includes("IAB_LIFECYCLE route window is not live") &&
+      currentSource.includes("BrowserWindow.fromId")
+    ) {
+      console.warn(
+        "WARN: Could not find Browser Use route liveness helper — skipping Linux route liveness fallback patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [
+    original,
+    functionName,
+    ensureWindowStateVar,
+    windowIdVar,
+    windowsVar,
+    stateVar,
+    browserWindowVar,
+    electronVar,
+    loggerVar,
+  ] = match;
+
+  const helper = `function codexLinuxResolveLiveBrowserUseRouteWindow(e,t,n,r){if(process.platform!==\`linux\`)return null;let i=[];try{for(let e of n.values())e!=null&&!e.window.isDestroyed()&&!e.owner.isDestroyed()&&i.push(e)}catch{}if(i.length===1)return i[0];let a=[];try{a=r.BrowserWindow.getAllWindows().filter(e=>e!=null&&!e.isDestroyed()&&!e.webContents.isDestroyed())}catch{return null}if(a.length!==1)return null;let o=a[0],s=n.get(o.id)??null;return s!=null&&!s.window.isDestroyed()&&!s.owner.isDestroyed()?s:e(o,o.webContents)}`;
+  const replacement = `${helper}function ${functionName}({ensureWindowState:${ensureWindowStateVar},windowId:${windowIdVar},windows:${windowsVar}}){let ${stateVar}=${windowsVar}.get(${windowIdVar})??null;if(${stateVar}==null){let ${browserWindowVar}=${electronVar}.BrowserWindow.fromId(${windowIdVar});${browserWindowVar}!=null&&!${browserWindowVar}.isDestroyed()&&!${browserWindowVar}.webContents.isDestroyed()&&(${stateVar}=${ensureWindowStateVar}(${browserWindowVar},${browserWindowVar}.webContents))}${stateVar}==null&&(${stateVar}=codexLinuxResolveLiveBrowserUseRouteWindow(${ensureWindowStateVar},${windowIdVar},${windowsVar},${electronVar}));return ${stateVar}==null||${stateVar}.window.isDestroyed()||${stateVar}.owner.isDestroyed()?(${loggerVar}().warning(\`IAB_LIFECYCLE route window is not live\`,{safe:{hasWindowState:${stateVar}!=null,ownerDestroyed:${stateVar}?.owner.isDestroyed()??null,windowDestroyed:${stateVar}?.window.isDestroyed()??null,windowId:${windowIdVar}},sensitive:{}}),null):${stateVar}}`;
+
+  return currentSource.replace(original, replacement);
+}
+
 function applyLinuxChromeExtensionStatusPatch(currentSource) {
   if (currentSource.includes("codexLinuxChromeProfileRoots")) {
     return currentSource;
@@ -1398,6 +1482,7 @@ function applyLinuxRemoteControlConfigPreservationPatch(currentSource) {
 
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxAboutDialogPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExplicitIpcQuitPatch,
@@ -1411,6 +1496,7 @@ module.exports = {
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxQuitGuardPatch,
   applyLinuxReadyToShowWindowStatePatch,
+  applyLinuxResizeRepaintPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
   applyLinuxSetIconPatch,
   applyLinuxSingleInstancePatch,

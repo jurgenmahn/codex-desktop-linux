@@ -461,7 +461,17 @@ function applyLinuxRemoteMobileAppServerRemoteControlPatch(source) {
 
   const helper =
     "function codexLinuxRemoteMobileAppServerArgs(){return process.platform===`linux`?[`app-server`,`--remote-control`,`--analytics-default-enabled`]:[`app-server`,`--analytics-default-enabled`]}";
-  return `${helper}${source.split(REMOTE_MOBILE_APP_SERVER_ARGS_NEEDLE).join("args:codexLinuxRemoteMobileAppServerArgs()")}`;
+  const replaced = source
+    .split(REMOTE_MOBILE_APP_SERVER_ARGS_NEEDLE)
+    .join("args:codexLinuxRemoteMobileAppServerArgs()");
+  // Insert after a leading "use strict" so prepending the helper does not
+  // demote the directive to a plain expression and de-strict the bundle.
+  const insertAt = replaced.startsWith('"use strict";')
+    ? '"use strict";'.length
+    : replaced.startsWith("'use strict';")
+      ? "'use strict';".length
+      : 0;
+  return `${replaced.slice(0, insertAt)}${helper}${replaced.slice(insertAt)}`;
 }
 
 function applyLinuxRemoteMobileAppServerRemoteControlExtractedAppPatch(extractedDir) {

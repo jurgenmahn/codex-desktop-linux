@@ -772,6 +772,15 @@ test("Linux remote mobile app-server launch enables remote control on the Deskto
   assert.equal(applyLinuxRemoteMobileAppServerRemoteControlPatch(patched), patched);
 });
 
+test("Linux remote mobile app-server launch keeps a leading use strict directive first", () => {
+  const source = `"use strict";${syntheticAppServerLaunchBundle()}`;
+  const patched = applyLinuxRemoteMobileAppServerRemoteControlPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /^"use strict";function codexLinuxRemoteMobileAppServerArgs/);
+  assert.equal(applyLinuxRemoteMobileAppServerRemoteControlPatch(patched), patched);
+});
+
 test("Linux remote-control client revoke clears setup completion after last client is removed", () => {
   const source = syntheticRevokeSetupResetBundle();
   const patched = applyLinuxRemoteControlClientRevokeSetupResetPatch(source);
