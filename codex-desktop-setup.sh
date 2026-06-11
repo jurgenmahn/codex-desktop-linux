@@ -33,6 +33,11 @@ ENABLE_ATSPI="${ENABLE_ATSPI:-1}"                       # accessibility tree for
 SETUP_WINDOW_TARGETING="${SETUP_WINDOW_TARGETING:-1}"   # GNOME window-control extension (needs relogin)
 DISABLE_WARM_START="${DISABLE_WARM_START:-1}"           # closing the app fully quits it
 UPDATE_CODEX_CLI="${UPDATE_CODEX_CLI:-1}"               # install/update @openai/codex@latest
+DISABLE_MULTI_INSTANCE="${DISABLE_MULTI_INSTANCE:-0}"   # set to 1 to strip the "New Window" multi-instance .desktop action
+
+# Optional linux-features to enable (space-separated). Empty = none.
+# Built into the app at build time (these patch the ASAR/staging).
+LINUX_FEATURES="${LINUX_FEATURES:-remote-mobile-control remote-control-ui open-target-discovery appshots codex-wrapper-updater}"
 
 # Optional: also update the Codex CLI on a remote SSH host you control.
 #   DO_REMOTE=1 REMOTE_HOST=192.168.113.2 bash codex-desktop-setup.sh
@@ -109,6 +114,29 @@ PY
 info "Wrote $SETTINGS"
 
 # ---------------------------------------------------------------------------
+# 4b. Enable optional linux-features (built into the ASAR at build time).
+# ---------------------------------------------------------------------------
+if [ -n "${LINUX_FEATURES// /}" ]; then
+  info "Enabling linux-features: $LINUX_FEATURES"
+  python3 - "$REPO_DIR/linux-features/features.json" $LINUX_FEATURES <<'PY'
+import json, sys
+path, want = sys.argv[1], sys.argv[2:]
+try:
+    data = json.load(open(path))
+    if not isinstance(data, dict): data = {}
+except Exception:
+    data = {}
+enabled = data.get("enabled") if isinstance(data.get("enabled"), list) else []
+for f in want:
+    if f not in enabled: enabled.append(f)
+data["enabled"] = enabled
+json.dump(data, open(path, "w"), indent=2)
+open(path, "a").write("\n")
+print("features.json enabled:", enabled)
+PY
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Build, package, install (.deb). Bake Computer Use UI into the build.
 # ---------------------------------------------------------------------------
 info "Building app from fresh upstream DMG (this downloads the DMG + compiles)..."
@@ -118,6 +146,28 @@ env "${CU_ENV[@]}" make build-app-fresh
 env "${CU_ENV[@]}" make package
 make install
 info "Package installed."
+
+# ---------------------------------------------------------------------------
+# 5b. Disable the "New Window" multi-instance .desktop action (annoying).
+#     Normal launches are already single-instance; this just removes the
+#     right-click "New Window" entry that spawns a separate instance.
+# ---------------------------------------------------------------------------
+if [ "$DISABLE_MULTI_INSTANCE" = "1" ]; then
+  DESKTOP_FILE="/usr/share/applications/codex-desktop.desktop"
+  if [ -f "$DESKTOP_FILE" ] && grep -q 'Desktop Action new-window' "$DESKTOP_FILE"; then
+    info "Removing the multi-instance 'New Window' action from $DESKTOP_FILE ..."
+    sudo awk '
+      /^\[Desktop Action new-window\]$/ { skip=1; next }
+      /^\[/ { skip=0 }
+      skip { next }
+      /^Actions=/ { gsub(/new-window;/, ""); print; next }
+      { print }
+    ' "$DESKTOP_FILE" | sudo tee "$DESKTOP_FILE.tmp" >/dev/null && sudo mv "$DESKTOP_FILE.tmp" "$DESKTOP_FILE"
+    command -v update-desktop-database >/dev/null 2>&1 && sudo update-desktop-database /usr/share/applications 2>/dev/null || true
+  else
+    info "No multi-instance action to remove."
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Codex CLI: install/update to latest at $CLI_PREFIX
